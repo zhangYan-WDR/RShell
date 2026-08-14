@@ -4,10 +4,11 @@ import Logo from './components/Logo';
 import { Sun, Moon } from 'lucide-react';
 
 export default function App() {
-  const [theme, setTheme] = useState('dark');
+  const [theme, setTheme] = useState(() => localStorage.getItem('rshell:app-theme') || 'dark');
   const [termTheme, setTermTheme] = useState(() => localStorage.getItem('rshell:terminal-theme') || 'cyber-deep');
 
   useEffect(() => {
+    localStorage.setItem('rshell:app-theme', theme);
     if (theme === 'light') {
       document.body.classList.add('light-theme');
     } else {

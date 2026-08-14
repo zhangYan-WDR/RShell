@@ -227,6 +227,11 @@ export default function SSHDashboard() {
   const containerRefs = useRef({}); 
   const resizeObserverRefs = useRef({}); 
   const resizeTimeoutRefs = useRef({}); 
+  const activeTabIdRef = useRef(activeTabId);
+  
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
   
   // Quick Connect State
   const [quickConnectInput, setQuickConnectInput] = useState('');
@@ -408,12 +413,28 @@ export default function SSHDashboard() {
     }
   };
 
-  // Focus terminal whenever activeTabId changes (tab switching or returning from host dashboard)
+  // Focus and fit terminal whenever activeTabId changes (tab switching or returning from host dashboard)
   useEffect(() => {
     if (activeTabId && activeTabId !== 'hosts-dashboard') {
       const term = terminalRefs.current[activeTabId];
+      const fitAddon = fitAddonRefs.current[activeTabId];
       if (term) {
         term.focus();
+        if (fitAddon) {
+          // Trigger fit and resize after a small delay to allow DOM transition to settle
+          setTimeout(() => {
+            try {
+              fitAddon.fit();
+              const cols = term.cols;
+              const rows = term.rows;
+              if (cols >= 60 && rows >= 15) {
+                window.api.ssh.resize(activeTabId, cols, rows);
+              }
+            } catch (e) {
+              console.warn('Tab switch fit error:', e);
+            }
+          }, 150);
+        }
       }
     }
   }, [activeTabId]);
@@ -549,7 +570,9 @@ export default function SSHDashboard() {
       term.loadAddon(searchAddon);
       searchAddonRefs.current[tabId] = searchAddon;
       term.open(container);
-      fitAddon.fit();
+      if (container.clientWidth > 200 && container.clientHeight > 100) {
+        fitAddon.fit();
+      }
 
       term.attachCustomKeyEventHandler((ev) => {
         if (ev.type === 'keydown') {
@@ -738,6 +761,9 @@ export default function SSHDashboard() {
       // Setup ResizeObserver to automatically fit and resize terminal to parent DOM changes
       try {
         const ro = new ResizeObserver((entries) => {
+          // Only perform fit and resize operations if this tab is the currently active tab
+          if (activeTabIdRef.current !== tabId) return;
+
           for (let entry of entries) {
             const { width, height } = entry.contentRect;
             if (width > 150 && height > 80) {
@@ -745,7 +771,9 @@ export default function SSHDashboard() {
                 fitAddon.fit();
                 const cols = term.cols;
                 const rows = term.rows;
-                if (cols >= 40 && rows >= 10) {
+                // Enforce a minimum safeguard (60 columns, 15 rows) to prevent
+                // remote shell prompt wrapping/distortion during layout transitions
+                if (cols >= 60 && rows >= 15) {
                   // Debounce remote PTY resize to prevent multiple SIGWINCH signals
                   // which cause prompt duplication/wrapping and multiple carriage returns
                   if (resizeTimeoutRefs.current[tabId]) {
@@ -2543,7 +2571,7 @@ export default function SSHDashboard() {
             )}
           </div>
 
-          /* VIEWPORT 2: TERMINAL WORKSPACE SCREEN (Left Monitor, Center Terminal, Right SFTP) */
+          {/* VIEWPORT 2: TERMINAL WORKSPACE SCREEN (Left Monitor, Center Terminal, Right SFTP) */}
           <div 
             className="terminal-session-screen"
             style={{ display: activeTabId !== 'hosts-dashboard' ? 'flex' : 'none' }}
@@ -2564,7 +2592,15 @@ export default function SSHDashboard() {
                       <div 
                         key={tab.id}
                         className="terminal-container-wrapper"
-                        style={{ display: tab.id === activeTabId ? 'block' : 'none', position: 'relative', width: '100%', height: '100%' }}
+                        style={{ 
+                          position: 'absolute', 
+                          left: tab.id === activeTabId ? '0' : '-9999px',
+                          top: '0',
+                          width: '100%', 
+                          height: '100%',
+                          visibility: tab.id === activeTabId ? 'visible' : 'hidden',
+                          opacity: tab.id === activeTabId ? 1 : 0
+                        }}
                       >
                         <div 
                           ref={el => containerRefs.current[tab.id] = el}
