@@ -225,6 +225,8 @@ export default function SSHDashboard() {
   const terminalRefs = useRef({}); 
   const fitAddonRefs = useRef({}); 
   const containerRefs = useRef({}); 
+  const resizeObserverRefs = useRef({}); 
+  const resizeTimeoutRefs = useRef({}); 
   
   // Quick Connect State
   const [quickConnectInput, setQuickConnectInput] = useState('');
@@ -396,7 +398,8 @@ export default function SSHDashboard() {
       try {
         fitAddonRefs.current[activeTabId].fit();
         const term = terminalRefs.current[activeTabId];
-        if (term) {
+        // Enforce minimum size safeguard to prevent shell prompt reprint distortion
+        if (term && term.cols >= 40 && term.rows >= 10) {
           window.api.ssh.resize(activeTabId, term.cols, term.rows);
         }
       } catch (e) {
@@ -404,6 +407,16 @@ export default function SSHDashboard() {
       }
     }
   };
+
+  // Focus terminal whenever activeTabId changes (tab switching or returning from host dashboard)
+  useEffect(() => {
+    if (activeTabId && activeTabId !== 'hosts-dashboard') {
+      const term = terminalRefs.current[activeTabId];
+      if (term) {
+        term.focus();
+      }
+    }
+  }, [activeTabId]);
 
   const closeKeyEditor = () => {
     setShowKeyEditor(false);
@@ -717,8 +730,42 @@ export default function SSHDashboard() {
         }
       }, 500);
 
-      window.api.ssh.resize(tabId, term.cols, term.rows);
+      if (term.cols >= 40 && term.rows >= 10) {
+        window.api.ssh.resize(tabId, term.cols, term.rows);
+      }
       term.focus();
+
+      // Setup ResizeObserver to automatically fit and resize terminal to parent DOM changes
+      try {
+        const ro = new ResizeObserver((entries) => {
+          for (let entry of entries) {
+            const { width, height } = entry.contentRect;
+            if (width > 150 && height > 80) {
+              try {
+                fitAddon.fit();
+                const cols = term.cols;
+                const rows = term.rows;
+                if (cols >= 40 && rows >= 10) {
+                  // Debounce remote PTY resize to prevent multiple SIGWINCH signals
+                  // which cause prompt duplication/wrapping and multiple carriage returns
+                  if (resizeTimeoutRefs.current[tabId]) {
+                    clearTimeout(resizeTimeoutRefs.current[tabId]);
+                  }
+                  resizeTimeoutRefs.current[tabId] = setTimeout(() => {
+                    window.api.ssh.resize(tabId, cols, rows);
+                  }, 120);
+                }
+              } catch (e) {
+                console.warn(`ResizeObserver fit error for tab ${tabId}:`, e);
+              }
+            }
+          }
+        });
+        ro.observe(container);
+        resizeObserverRefs.current[tabId] = ro;
+      } catch (err) {
+        console.error('Failed to initialize ResizeObserver:', err);
+      }
     }, 100);
   };
 
@@ -952,6 +999,14 @@ export default function SSHDashboard() {
     }
     delete fitAddonRefs.current[tabId];
     delete containerRefs.current[tabId];
+    if (resizeObserverRefs.current[tabId]) {
+      resizeObserverRefs.current[tabId].disconnect();
+      delete resizeObserverRefs.current[tabId];
+    }
+    if (resizeTimeoutRefs.current[tabId]) {
+      clearTimeout(resizeTimeoutRefs.current[tabId]);
+      delete resizeTimeoutRefs.current[tabId];
+    }
 
     const tabIdx = tabs.findIndex(t => t.id === tabId);
     const updatedTabs = tabs.filter(t => t.id !== tabId);
@@ -2125,11 +2180,11 @@ export default function SSHDashboard() {
           </div>
         </div>
 
-        {/* Content Viewports (conditional on activeTabId) */}
-        {activeTabId === 'hosts-dashboard' ? (
-          
-          /* VIEWPORT 1: PERSISTENT FULL-SCREEN CONNECTION MANAGER GRID PAGE (Termius style) */
-          <div className="hosts-grid-dashboard-screen">
+        {/* Content Viewports (never unmounted to prevent terminal black screen / layout bugs) */}
+        <div 
+          className="hosts-grid-dashboard-screen"
+          style={{ display: activeTabId === 'hosts-dashboard' ? 'block' : 'none' }}
+        >
             {/* Top Toolbar Row */}
             <div className="hosts-dashboard-top-row">
               <div className="dashboard-title-box" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
@@ -2487,10 +2542,12 @@ export default function SSHDashboard() {
               </>
             )}
           </div>
-        ) : (
 
           /* VIEWPORT 2: TERMINAL WORKSPACE SCREEN (Left Monitor, Center Terminal, Right SFTP) */
-          <div className="terminal-session-screen">
+          <div 
+            className="terminal-session-screen"
+            style={{ display: activeTabId !== 'hosts-dashboard' ? 'flex' : 'none' }}
+          >
             {/* Left sidebar: strictly dedicated to active stats monitoring */}
             <div className={`collapsible-left-sidebar ${showLeftSidebar ? 'open' : 'collapsed'}`}>
               {showLeftSidebar && renderLeftMonitorPanel()}
@@ -3050,7 +3107,6 @@ export default function SSHDashboard() {
               )}
             </aside>
           </div>
-        )}
 
       </div>
 
