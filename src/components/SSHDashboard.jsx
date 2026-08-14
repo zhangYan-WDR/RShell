@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Server, Terminal, Plus, Folder, File, Trash2, Edit3, RefreshCw, 
-  UploadCloud, DownloadCloud, FolderPlus, X, Send, Play, Layers, Copy,
+  UploadCloud, DownloadCloud, FolderPlus, X, Send, Play, Pause, Layers, Copy,
   ChevronRight, ChevronDown, ChevronUp, Check, AlertCircle, Key, Lock, Eye, EyeOff,
   Activity, Search, List, ArrowLeftRight, HardDrive, Cpu, Compass,
   ArrowUp, ArrowDown, ActivitySquare, Monitor, Home
