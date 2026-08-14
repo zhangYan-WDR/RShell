@@ -791,6 +791,22 @@ export default function SSHDashboard() {
         });
         ro.observe(container);
         resizeObserverRefs.current[tabId] = ro;
+
+        // Perform initial fit and PTY resize after container settles in the DOM
+        setTimeout(() => {
+          try {
+            if (fitAddonRefs.current[tabId] && terminalRefs.current[tabId]) {
+              fitAddonRefs.current[tabId].fit();
+              const cols = terminalRefs.current[tabId].cols;
+              const rows = terminalRefs.current[tabId].rows;
+              if (cols >= 60 && rows >= 15) {
+                window.api.ssh.resize(tabId, cols, rows);
+              }
+            }
+          } catch (e) {
+            console.warn(`Initial fit error for tab ${tabId}:`, e);
+          }
+        }, 150);
       } catch (err) {
         console.error('Failed to initialize ResizeObserver:', err);
       }

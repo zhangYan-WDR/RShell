@@ -54,7 +54,7 @@ function request(options, body) {
   });
 }
 
-async function uploadAssetWithRetry(uploadUrl, filePath, fileName, contentType, retries = 3) {
+async function uploadAssetWithRetry(releaseId, uploadUrl, filePath, fileName, contentType, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
       console.log(`Uploading ${fileName} (Attempt ${i + 1}/${retries})...`);
@@ -94,6 +94,39 @@ async function uploadAssetWithRetry(uploadUrl, filePath, fileName, contentType, 
       return; // Succeeded!
     } catch (err) {
       console.error(`Attempt ${i + 1} failed for ${fileName}:`, err.message);
+
+      // If the error says "already_exists", query the asset list to find and delete the existing asset
+      if (err.message.includes('already_exists')) {
+        console.log(`Asset ${fileName} already exists. Finding and deleting it...`);
+        try {
+          const releaseInfo = await request({
+            hostname: 'api.github.com',
+            path: `/repos/${REPO}/releases/${releaseId}`,
+            method: 'GET',
+            headers: {
+              'Authorization': `token ${TOKEN}`,
+              'User-Agent': 'RShell-Publisher'
+            }
+          });
+          const matchedAsset = (releaseInfo.assets || []).find(a => a.name === fileName);
+          if (matchedAsset) {
+            await request({
+              hostname: 'api.github.com',
+              path: `/repos/${REPO}/releases/assets/${matchedAsset.id}`,
+              method: 'DELETE',
+              headers: {
+                'Authorization': `token ${TOKEN}`,
+                'User-Agent': 'RShell-Publisher'
+              }
+            });
+            console.log(`Deleted existing asset ${fileName}. Waiting 3s...`);
+            await new Promise(r => setTimeout(r, 3000));
+          }
+        } catch (delErr) {
+          console.error(`Failed to handle asset deletion:`, delErr.message);
+        }
+      }
+
       if (i === retries - 1) throw err;
       await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5s before retry
     }
@@ -149,7 +182,7 @@ async function run() {
       tag_name: TAG,
       target_commitish: 'main',
       name: TAG,
-      body: `### RShell v1.0.0 正式发布 🚀\n\n#### 🌟 核心特性与亮点\n* **智能终端联想补全 (Terminal Suggestions)**：实时光标跟随匹配，双重校验防抖算法，支持 Zsh/Bash 等主流提示符。\n* **双栏 SFTP 文件传输**：高性能节流重绘机制，支持断点重试与队列管理。\n* **终端内容搜索 (Cmd+F)**：毛玻璃精致搜索浮栏，支持快捷位置避让。\n* **凭据与私钥托管**：独立凭据管理，支持跳板机（堡垒机）级联网络穿透。\n* **实时系统监控**：高频采集远端 CPU/内存/网络流素，支持可视化目录空间 analysis。\n\n#### 📦 编译产物下载\n* **macOS 平台 (Apple Silicon)**：\`RShell-1.0.0-arm64.dmg\`\n* **Windows 平台**：\`RShell Setup 1.0.0.exe\` (安装包), \`RShell-1.0.0-arm64-win.zip\` (免安装便携版)`,
+      body: `### RShell v1.0.0 正式发布 🚀\n\n#### 🌟 核心特色与亮点\n* **智能终端联想补全 (Terminal Suggestions)**：实时光标跟随匹配，双重校验防抖算法，支持 Zsh/Bash 等主流提示符。\n* **双栏 SFTP 文件传输**：高性能节流重绘机制，支持断点重试与队列管理。\n* **终端内容搜索 (Cmd+F)**：毛玻璃精致搜索浮栏，支持快捷位置避让。\n* **凭据与私钥托管**：独立凭据管理，支持跳板机（堡垒机）级联网络穿透。\n* **实时系统监控**：高频采集远端 CPU/内存/网络流素，支持可视化目录空间 analysis。\n\n#### 📦 编译产物下载\n* **macOS 平台 (Apple Silicon)**：\`RShell-1.0.0-arm64.dmg\`\n* **Windows 平台**：\`RShell Setup 1.0.0.exe\` (安装包), \`RShell-1.0.0-arm64-win.zip\` (免安装便携版)`,
       draft: false,
       prerelease: false
     });
@@ -160,7 +193,7 @@ async function run() {
     for (const asset of assets) {
       const filePath = path.join(distDir, asset.name);
       if (fs.existsSync(filePath)) {
-        await uploadAssetWithRetry(uploadUrl, filePath, asset.name, asset.contentType);
+        await uploadAssetWithRetry(releaseData.id, uploadUrl, filePath, asset.name, asset.contentType);
       } else {
         console.warn(`Warning: Asset file not found: ${filePath}`);
       }
