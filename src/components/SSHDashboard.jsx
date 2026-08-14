@@ -369,9 +369,15 @@ export default function SSHDashboard() {
     };
   }, [activeTabId, sftpPaths]);
 
-  // Clean up terminals when dashboard unmounts
+  // Clean up terminals when dashboard unmounts and prevent default dragover/drop behaviors globally
   useEffect(() => {
+    const preventDefault = (e) => e.preventDefault();
+    window.addEventListener('dragover', preventDefault);
+    window.addEventListener('drop', preventDefault);
+
     return () => {
+      window.removeEventListener('dragover', preventDefault);
+      window.removeEventListener('drop', preventDefault);
       tabs.forEach(tab => {
         window.api.ssh.disconnect(tab.id);
       });
@@ -1374,7 +1380,7 @@ export default function SSHDashboard() {
 
   const triggerUpload = async (localFilePath) => {
     if (!activeTabId || activeTabId === 'hosts-dashboard') return;
-    const filename = localFilePath.substring(localFilePath.lastIndexOf('/') + 1) || localFilePath;
+    const filename = localFilePath.split(/[/\\]/).pop() || localFilePath;
     const destRemotePath = sftpPath.endsWith('/') ? `${sftpPath}${filename}` : `${sftpPath}/${filename}`;
     const transferId = `up-${Date.now()}-${Math.random()}`;
     
@@ -1403,8 +1409,9 @@ export default function SSHDashboard() {
 
   const triggerDownload = async (remoteFilePath) => {
     if (!activeTabId || activeTabId === 'hosts-dashboard') return;
-    const filename = remoteFilePath.substring(remoteFilePath.lastIndexOf('/') + 1) || remoteFilePath;
-    const destLocalPath = localPath.endsWith('/') ? `${localPath}${filename}` : `${localPath}/${filename}`;
+    const filename = remoteFilePath.split('/').pop() || remoteFilePath;
+    const pathPrefix = (typeof localPath === 'string') ? localPath : '/Users/zhangyan/Downloads';
+    const destLocalPath = pathPrefix.endsWith('/') ? `${pathPrefix}${filename}` : `${pathPrefix}/${filename}`;
     const transferId = `down-${Date.now()}-${Math.random()}`;
     
     setSftpTransfers(prev => [...prev, {
