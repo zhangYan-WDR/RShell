@@ -197,8 +197,14 @@ export default function SSHDashboard() {
   const [localPathInput, setLocalPathInput] = useState('/Users/zhangyan/Downloads');
   const [localFiles, setLocalFiles] = useState([]);
   const [localLoading, setLocalLoading] = useState(false);
-  const [selectedLocalPath, setSelectedLocalPath] = useState('');
-  const [selectedRemotePath, setSelectedRemotePath] = useState('');
+  const [selectedLocalPaths, setSelectedLocalPaths] = useState([]);
+  const [selectedRemotePaths, setSelectedRemotePaths] = useState([]);
+  const [lastSelectedLocalIndex, setLastSelectedLocalIndex] = useState(-1);
+  const [lastSelectedRemoteIndex, setLastSelectedRemoteIndex] = useState(-1);
+  const activeTransfers = sftpTransfers.filter(t => t.status === 'running' || t.status === 'pending' || t.status === 'completed');
+  const totalProgress = activeTransfers.length > 0
+    ? Math.round(activeTransfers.reduce((sum, t) => sum + (t.progress || 0), 0) / activeTransfers.length)
+    : 0;
 
   // Right-click custom context menu state
   const [contextMenu, setContextMenu] = useState(null); // { x, y, sessionId, hasSelection }
@@ -1340,6 +1346,56 @@ export default function SSHDashboard() {
     window.addEventListener('click', closeMenu);
     return () => window.removeEventListener('click', closeMenu);
   }, []);
+
+  const handleLocalFileClick = (file, index, event) => {
+    setSelectedRemotePaths([]);
+    setLastSelectedRemoteIndex(-1);
+    const path = `${localPath}/${file.name}`;
+    if (event.metaKey || event.ctrlKey) {
+      setSelectedLocalPaths(prev => {
+        if (prev.includes(path)) {
+          return prev.filter(p => p !== path);
+        } else {
+          return [...prev, path];
+        }
+      });
+      setLastSelectedLocalIndex(index);
+    } else if (event.shiftKey && lastSelectedLocalIndex >= 0) {
+      const start = Math.min(lastSelectedLocalIndex, index);
+      const end = Math.max(lastSelectedLocalIndex, index);
+      const rangePaths = localFiles.slice(start, end + 1).map(f => `${localPath}/${f.name}`);
+      setSelectedLocalPaths(rangePaths);
+    } else {
+      setSelectedLocalPaths([path]);
+      setLastSelectedLocalIndex(index);
+    }
+  };
+
+  const handleRemoteFileClick = (file, index, event) => {
+    setSelectedLocalPaths([]);
+    setLastSelectedLocalIndex(-1);
+    const fullRemote = sftpPath.endsWith('/') ? `${sftpPath}${file.name}` : `${sftpPath}/${file.name}`;
+    if (event.metaKey || event.ctrlKey) {
+      setSelectedRemotePaths(prev => {
+        if (prev.includes(fullRemote)) {
+          return prev.filter(p => p !== fullRemote);
+        } else {
+          return [...prev, fullRemote];
+        }
+      });
+      setLastSelectedRemoteIndex(index);
+    } else if (event.shiftKey && lastSelectedRemoteIndex >= 0) {
+      const start = Math.min(lastSelectedRemoteIndex, index);
+      const end = Math.max(lastSelectedRemoteIndex, index);
+      const rangePaths = sftpFiles.slice(start, end + 1).map(f => {
+        return sftpPath.endsWith('/') ? `${sftpPath}${f.name}` : `${sftpPath}/${f.name}`;
+      });
+      setSelectedRemotePaths(rangePaths);
+    } else {
+      setSelectedRemotePaths([fullRemote]);
+      setLastSelectedRemoteIndex(index);
+    }
+  };
 
   const loadLocalFiles = async (dirPath) => {
     setLocalLoading(true);
@@ -2928,9 +2984,21 @@ export default function SSHDashboard() {
                               onDragOver={(e) => e.preventDefault()}
                               onDrop={(e) => {
                                 e.preventDefault();
-                                const remoteFilePath = e.dataTransfer.getData('rshell/remote-path');
-                                if (remoteFilePath) {
-                                  triggerDownload(remoteFilePath);
+                                const remotePathsJson = e.dataTransfer.getData('rshell/remote-paths');
+                                if (remotePathsJson) {
+                                  try {
+                                    const paths = JSON.parse(remotePathsJson);
+                                    if (Array.isArray(paths)) {
+                                      paths.forEach(p => triggerDownload(p));
+                                    }
+                                  } catch (err) {
+                                    console.error('Failed to parse dropped remote paths:', err);
+                                  }
+                                } else {
+                                  const remoteFilePath = e.dataTransfer.getData('rshell/remote-path');
+                                  if (remoteFilePath) {
+                                    triggerDownload(remoteFilePath);
+                                  }
                                 }
                               }}
                             >
@@ -2962,19 +3030,31 @@ export default function SSHDashboard() {
                                 ) : localFiles.length === 0 ? (
                                   <div className="sftp-empty-hint">目录为空</div>
                                 ) : (
-                                  localFiles.map(file => {
-                                    const isSelected = selectedLocalPath === `${localPath}/${file.name}`;
+                                  localFiles.map((file, index) => {
+                                    const isSelected = selectedLocalPaths.includes(`${localPath}/${file.name}`);
+                                    const activeTransfer = sftpTransfers.find(t => t.localPath === `${localPath}/${file.name}` && (t.status === 'running' || t.status === 'pending'));
+                                    const progressBackground = activeTransfer && activeTransfer.status === 'running'
+                                      ? `linear-gradient(90deg, rgba(0, 229, 255, 0.15) ${activeTransfer.progress || 0}%, ${isSelected ? 'rgba(0, 229, 255, 0.08)' : 'transparent'} ${activeTransfer.progress || 0}%)`
+                                      : isSelected ? 'rgba(0, 229, 255, 0.08)' : 'transparent';
                                     return (
                                       <div 
                                         key={file.name}
                                         className={`sftp-item-row-card ${isSelected ? 'selected' : ''}`}
-                                        onClick={() => setSelectedLocalPath(`${localPath}/${file.name}`)}
+                                        onClick={(e) => handleLocalFileClick(file, index, e)}
                                         onDoubleClick={() => file.isDirectory ? handleLocalNavigate(file.name, true) : triggerUpload(`${localPath}/${file.name}`)}
                                         draggable={!file.isDirectory}
                                         onDragStart={(e) => {
-                                          e.dataTransfer.setData('text/plain', `${localPath}/${file.name}`);
-                                          e.dataTransfer.setData('rshell/local-path', `${localPath}/${file.name}`);
+                                          const path = `${localPath}/${file.name}`;
+                                          let dragPaths = [...selectedLocalPaths];
+                                          if (!dragPaths.includes(path)) {
+                                            dragPaths = [path];
+                                            setSelectedLocalPaths([path]);
+                                            setLastSelectedLocalIndex(index);
+                                          }
+                                          e.dataTransfer.setData('text/plain', dragPaths.join('\n'));
+                                          e.dataTransfer.setData('rshell/local-paths', JSON.stringify(dragPaths));
                                         }}
+                                        style={{ background: progressBackground }}
                                       >
                                         <div className="sftp-item-left">
                                           {file.isDirectory ? (
@@ -3009,9 +3089,21 @@ export default function SSHDashboard() {
                               onDragOver={(e) => e.preventDefault()}
                               onDrop={(e) => {
                                 e.preventDefault();
-                                const localFilePath = e.dataTransfer.getData('rshell/local-path');
-                                if (localFilePath) {
-                                  triggerUpload(localFilePath);
+                                const localPathsJson = e.dataTransfer.getData('rshell/local-paths');
+                                if (localPathsJson) {
+                                  try {
+                                    const paths = JSON.parse(localPathsJson);
+                                    if (Array.isArray(paths)) {
+                                      paths.forEach(p => triggerUpload(p));
+                                    }
+                                  } catch (err) {
+                                    console.error('Failed to parse dropped local paths:', err);
+                                  }
+                                } else {
+                                  const localFilePath = e.dataTransfer.getData('rshell/local-path');
+                                  if (localFilePath) {
+                                    triggerUpload(localFilePath);
+                                  }
                                 }
                               }}
                             >
@@ -3051,20 +3143,31 @@ export default function SSHDashboard() {
                                 ) : sftpFiles.length === 0 ? (
                                   <div className="sftp-empty-hint">目录为空</div>
                                 ) : (
-                                  sftpFiles.map(file => {
+                                  sftpFiles.map((file, index) => {
                                     const fullRemote = sftpPath.endsWith('/') ? `${sftpPath}${file.name}` : `${sftpPath}/${file.name}`;
-                                    const isSelected = selectedRemotePath === fullRemote;
+                                    const isSelected = selectedRemotePaths.includes(fullRemote);
+                                    const activeTransfer = sftpTransfers.find(t => t.remotePath === fullRemote && (t.status === 'running' || t.status === 'pending'));
+                                    const progressBackground = activeTransfer && activeTransfer.status === 'running'
+                                      ? `linear-gradient(90deg, rgba(0, 229, 255, 0.15) ${activeTransfer.progress || 0}%, ${isSelected ? 'rgba(0, 229, 255, 0.08)' : 'transparent'} ${activeTransfer.progress || 0}%)`
+                                      : isSelected ? 'rgba(0, 229, 255, 0.08)' : 'transparent';
                                     return (
                                       <div 
                                         key={file.name}
                                         className={`sftp-item-row-card ${isSelected ? 'selected' : ''}`}
-                                        onClick={() => setSelectedRemotePath(fullRemote)}
+                                        onClick={(e) => handleRemoteFileClick(file, index, e)}
                                         onDoubleClick={() => file.type === 'd' ? handleSftpNavigate(file.name, 'd') : triggerDownload(fullRemote)}
                                         draggable={file.type !== 'd'}
                                         onDragStart={(e) => {
-                                          e.dataTransfer.setData('text/plain', fullRemote);
-                                          e.dataTransfer.setData('rshell/remote-path', fullRemote);
+                                          let dragPaths = [...selectedRemotePaths];
+                                          if (!dragPaths.includes(fullRemote)) {
+                                            dragPaths = [fullRemote];
+                                            setSelectedRemotePaths([fullRemote]);
+                                            setLastSelectedRemoteIndex(index);
+                                          }
+                                          e.dataTransfer.setData('text/plain', dragPaths.join('\n'));
+                                          e.dataTransfer.setData('rshell/remote-paths', JSON.stringify(dragPaths));
                                         }}
+                                        style={{ background: progressBackground }}
                                       >
                                         <div className="sftp-item-left">
                                           {file.type === 'd' ? (
@@ -3110,9 +3213,16 @@ export default function SSHDashboard() {
                                 className="sftp-queue-resizer" 
                                 onMouseDown={handleQueueResizeMouseDown}
                               />
+
+                              {/* Global batch progress bar */}
+                              {activeTransfers.length > 0 && (
+                                <div className="sftp-queue-total-progress-bar" style={{ width: '100%', height: '3px', background: 'rgba(255,255,255,0.05)', position: 'relative', overflow: 'hidden' }}>
+                                  <div style={{ width: `${totalProgress}%`, height: '100%', background: 'var(--color-primary)', transition: 'width 0.3s ease' }} />
+                                </div>
+                              )}
                               
                               <div className="transfers-header">
-                                <span>文件传输队列 ({sftpTransfers.filter(t => t.status === 'running' || t.status === 'pending').length})</span>
+                                <span>文件传输队列 ({sftpTransfers.filter(t => t.status === 'running' || t.status === 'pending').length}个进行中, 总进度: {totalProgress}%)</span>
                                 <button className="text-btn" onClick={() => setSftpTransfers(prev => prev.filter(t => t.status !== 'completed' && t.status !== 'cancelled'))}>清除已完成</button>
                               </div>
                               <div className="transfers-list">
