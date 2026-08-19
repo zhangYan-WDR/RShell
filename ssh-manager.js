@@ -40,8 +40,12 @@ class SSHManager extends EventEmitter {
         } else if (config.privateKeyPath) {
           try {
             connOptions.privateKey = fs.readFileSync(config.privateKeyPath);
+            const certPath = `${config.privateKeyPath}-cert.pub`;
+            if (fs.existsSync(certPath)) {
+              connOptions.publicKey = fs.readFileSync(certPath);
+            }
           } catch (readErr) {
-            return reject(new Error(`无法读取私钥文件: ${readErr.message}`));
+            return reject(new Error(`无法读取私钥或证书文件: ${readErr.message}`));
           }
         }
         if (config.passphrase) {
@@ -262,8 +266,12 @@ class SSHManager extends EventEmitter {
           } else if (config.jumpHost.privateKeyPath) {
             try {
               jumpOptions.privateKey = fs.readFileSync(config.jumpHost.privateKeyPath);
+              const jumpCertPath = `${config.jumpHost.privateKeyPath}-cert.pub`;
+              if (fs.existsSync(jumpCertPath)) {
+                jumpOptions.publicKey = fs.readFileSync(jumpCertPath);
+              }
             } catch (readErr) {
-              return reject(new Error(`无法读取跳板机私钥文件: ${readErr.message}`));
+              return reject(new Error(`无法读取跳板机私钥或证书文件: ${readErr.message}`));
             }
           }
           if (config.jumpHost.passphrase) {
